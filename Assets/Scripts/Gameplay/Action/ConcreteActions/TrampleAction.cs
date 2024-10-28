@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.BossRoom.Gameplay.GameplayObjects;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character;
+using Unity.BossRoom.Gameplay.Metrics;
 using Unity.Netcode;
 using UnityEngine;
 using Random = UnityEngine.Random;
@@ -69,17 +70,18 @@ namespace Unity.BossRoom.Gameplay.Actions
                         lookAtPosition = initialTarget.transform.position;
                     }
 
-                    // snap to face our target! This is the direction we'll attack in
+                    // Snap to face our target! This is the direction we'll attack in.
                     serverCharacter.physicsWrapper.Transform.LookAt(lookAtPosition);
                 }
             }
 
-            // reset our "stop" trigger (in case the previous run of the trample action was aborted due to e.g. being stunned)
+            // Reset our "stop" trigger (in case the previous run of the trample action was aborted due to e.g. being stunned)
             if (!string.IsNullOrEmpty(Config.Anim2))
             {
                 serverCharacter.serverAnimationHandler.NetworkAnimator.ResetTrigger(Config.Anim2);
             }
-            // start the animation sequence!
+
+            // Start the animation sequence!
             if (!string.IsNullOrEmpty(Config.Anim))
             {
                 serverCharacter.serverAnimationHandler.NetworkAnimator.SetTrigger(Config.Anim);
@@ -117,7 +119,7 @@ namespace Unity.BossRoom.Gameplay.Actions
             ActionStage newState = GetCurrentStage();
             if (newState != m_PreviousStage && newState == ActionStage.Charging)
             {
-                // we've just started to charge across the screen! Anyone currently touching us gets hit
+                // We've just started to charge across the screen! Anyone currently touching us gets hit.
                 SimulateCollisionWithNearbyFoes(clientCharacter);
                 clientCharacter.Movement.StartForwardCharge(Config.MoveSpeed, Config.DurationSeconds - Config.ExecTimeSeconds);
             }
@@ -137,25 +139,26 @@ namespace Unity.BossRoom.Gameplay.Actions
         {
             if (victim == parent)
             {
-                // can't collide with ourselves!
+                // Can't collide with ourselves!
                 return;
             }
 
             if (m_WasStunned)
             {
-                // someone already stunned us, so no further damage can happen
+                // Someone already stunned us, so no further damage can happen.
                 return;
             }
 
-            // if we collide with allies, we don't want to hurt them (but we do knock them back, see below)
+            // If we collide with allies, we don't want to hurt them (but we do knock them back, see below).
             if (parent.IsNpc != victim.IsNpc)
             {
-                // first see if this victim has the special ability to stun us!
+                // First, see if this victim has the special ability to stun us!
                 float chanceToStun = victim.GetBuffedValue(BuffableValue.ChanceToStunTramplers);
                 if (chanceToStun > 0 && Random.Range(0, 1) < chanceToStun)
                 {
-                    // we're stunned! No collision behavior for the victim. Stun ourselves and abort.
+                    // We're stunned! No collision behavior for the victim. Stun ourselves and abort.
                     StunSelf(parent);
+                    MetricsManager.Instance.TrackTrampleStun(parent.NetworkObjectId); // Track stun occurrence
                     return;
                 }
 
@@ -173,28 +176,34 @@ namespace Unity.BossRoom.Gameplay.Actions
                 if (victim.gameObject.TryGetComponent(out IDamageable damageable))
                 {
                     damageable.ReceiveHP(parent, -damage);
+
+                    // Track damage dealt
+                    MetricsManager.Instance.TrackTrampleDamage(parent.NetworkObjectId, damage);
                 }
             }
+
+            // Track the enemy hit
+            MetricsManager.Instance.TrackTrampleHit(parent.NetworkObjectId, 1);
 
             var victimMovement = victim.Movement;
             victimMovement.StartKnockback(parent.physicsWrapper.Transform.position, Config.KnockbackSpeed, Config.KnockbackDuration);
         }
 
-        // called by owning class when parent's Collider collides with stuff
+        // Called by owning class when parent's Collider collides with stuff
         public override void CollisionEntered(ServerCharacter serverCharacter, Collision collision)
         {
-            // we only detect other possible victims when we start charging
+            // We only detect other possible victims when we start charging.
             if (GetCurrentStage() != ActionStage.Charging)
                 return;
 
             Collide(serverCharacter, collision.collider);
         }
 
-        // here we handle colliding with anything (whether a victim or not)
+        // Here we handle colliding with anything (whether a victim or not)
         private void Collide(ServerCharacter parent, Collider collider)
         {
             if (m_CollidedAlready.Contains(collider))
-                return; // already hit them!
+                return; // Already hit them!
 
             m_CollidedAlready.Add(collider);
 
@@ -205,16 +214,20 @@ namespace Unity.BossRoom.Gameplay.Actions
             }
             else if (!m_WasStunned)
             {
-                // they aren't a living, breathing victim, but they might still be destructible...
+                // They aren't a living, breathing victim, but they might still be destructible...
                 var damageable = collider.gameObject.GetComponent<IDamageable>();
                 if (damageable != null)
                 {
                     damageable.ReceiveHP(parent, -Config.SplashDamage);
 
-                    // lastly, a special case: if the trampler runs into certain breakables, they are stunned!
+                    // Track damage dealt
+                    MetricsManager.Instance.TrackTrampleDamage(parent.NetworkObjectId, Config.SplashDamage);
+
+                    // Lastly, a special case: if the trampler runs into certain breakables, they are stunned!
                     if ((damageable.GetSpecialDamageFlags() & IDamageable.SpecialDamageFlags.StunOnTrample) == IDamageable.SpecialDamageFlags.StunOnTrample)
                     {
                         StunSelf(parent);
+                        MetricsManager.Instance.TrackTrampleStun(parent.NetworkObjectId); // Track stun occurrence
                     }
                 }
             }

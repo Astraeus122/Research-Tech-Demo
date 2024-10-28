@@ -2,6 +2,7 @@ using System;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character;
 using Unity.Netcode;
 using UnityEngine;
+using Unity.BossRoom.Gameplay.Metrics;
 
 namespace Unity.BossRoom.Gameplay.Actions
 {
@@ -16,18 +17,22 @@ namespace Unity.BossRoom.Gameplay.Actions
     {
         public override bool OnStart(ServerCharacter serverCharacter)
         {
-            //we must always clear the existing target, even if we don't run. This is how targets get cleared--running a TargetAction
-            //with no target selected.
+            // Clear the existing target
             serverCharacter.TargetId.Value = 0;
 
-            //there can only be one TargetAction at a time!
+            // Cancel any running TargetAction
             serverCharacter.ActionPlayer.CancelRunningActionsByLogic(ActionLogic.Target, true, this);
 
             if (Data.TargetIds == null || Data.TargetIds.Length == 0) { return false; }
 
-            serverCharacter.TargetId.Value = TargetId;
+            // Set the new target
+            ulong targetId = TargetId;
+            serverCharacter.TargetId.Value = targetId;
 
-            FaceTarget(serverCharacter, TargetId);
+            // Track target acquisition
+            MetricsManager.Instance.TrackTargetAcquisition(serverCharacter.NetworkObjectId, targetId);
+
+            FaceTarget(serverCharacter, targetId);
 
             return true;
         }
@@ -57,16 +62,16 @@ namespace Unity.BossRoom.Gameplay.Actions
         {
             if (serverCharacter.TargetId.Value == TargetId)
             {
+                // Track target disengagement
+                MetricsManager.Instance.TrackTargetEngagementEnd(TargetId);
+
+                // Clear target
                 serverCharacter.TargetId.Value = 0;
             }
         }
 
         private ulong TargetId { get { return Data.TargetIds[0]; } }
 
-        /// <summary>
-        /// Only call this after validating the target via IsValidTarget.
-        /// </summary>
-        /// <param name="targetId"></param>
         private void FaceTarget(ServerCharacter parent, ulong targetId)
         {
             if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(targetId, out var targetObject))

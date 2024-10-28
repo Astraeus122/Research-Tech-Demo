@@ -308,7 +308,7 @@ namespace Unity.BossRoom.Gameplay.Actions
         /// Utility function that instantiates one of the graphics from the Spawns list.
         /// If parentToOrigin is true, the new graphics are parented to the origin Transform.
         /// If false, they are positioned/oriented the same way but are not parented.
-        /// </summary>
+        /// </summary> 
         protected SpecialFXGraphic InstantiateSpecialFXGraphic(GameObject prefab, Transform origin, bool parentToOrigin)
         {
             if (prefab.GetComponent<SpecialFXGraphic>() == null)

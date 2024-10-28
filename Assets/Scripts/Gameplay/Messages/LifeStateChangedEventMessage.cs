@@ -11,5 +11,6 @@ namespace Unity.BossRoom.Gameplay.Messages
         public LifeState NewLifeState;
         public CharacterTypeEnum CharacterType;
         public FixedPlayerName CharacterName;
+        public ulong ClientId;  // Track the client associated with this event
     }
 }

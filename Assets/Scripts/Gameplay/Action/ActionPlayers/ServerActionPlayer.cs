@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Unity.BossRoom.Gameplay.GameplayObjects;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character;
+using Unity.BossRoom.Gameplay.Metrics;
 using UnityEngine;
 using UnityEngine.Pool;
 
@@ -20,6 +21,9 @@ namespace Unity.BossRoom.Gameplay.Actions
         private List<Action> m_NonBlockingActions;
 
         private Dictionary<ActionID, float> m_LastUsedTimestamps;
+
+        // Track when an action is currently being canceled or adjusted
+        private bool isCancelingAction = false;
 
         /// <summary>
         /// To prevent the action queue from growing without bound, we cap its play time to this number of seconds. We can only ever estimate
@@ -46,69 +50,77 @@ namespace Unity.BossRoom.Gameplay.Actions
         public void PlayAction(ref ActionRequestData action)
         {
             if (!action.ShouldQueue && m_Queue.Count > 0 &&
-                (m_Queue[0].Config.ActionInterruptible ||
-                    m_Queue[0].Config.CanBeInterruptedBy(action.ActionID)))
+                (m_Queue[0].Config.ActionInterruptible || m_Queue[0].Config.CanBeInterruptedBy(action.ActionID)))
             {
                 ClearActions(false);
             }
 
             if (GetQueueTimeDepth() >= k_MaxQueueTimeDepth)
             {
-                //the queue is too big (in execution seconds) to accommodate any more actions, so this action must be discarded.
-                return;
+                return; // Discard action if queue is too long
             }
 
             var newAction = ActionFactory.CreateActionFromData(ref action);
             m_Queue.Add(newAction);
-            if (m_Queue.Count == 1) { StartAction(); }
+
+            // Track the action performed for metrics
+            if (MetricsManager.Instance != null)
+            {
+                MetricsManager.Instance.TrackActionPerformed(m_ServerCharacter.NetworkObjectId, newAction.Config.Logic);
+            }
+
+            if (m_Queue.Count == 1)
+            {
+                StartAction();
+            }
         }
 
         public void ClearActions(bool cancelNonBlocking)
         {
             if (m_Queue.Count > 0)
             {
-                // Since this action was canceled, we don't want the player to have to wait Description.ReuseTimeSeconds
-                // to be able to start it again. It should be restartable immediately!
                 m_LastUsedTimestamps.Remove(m_Queue[0].ActionID);
                 m_Queue[0].Cancel(m_ServerCharacter);
+
+                // Track the canceled action in MetricsManager
+                if (MetricsManager.Instance != null)
+                {
+                    MetricsManager.Instance.TrackActionCanceled(m_ServerCharacter.NetworkObjectId, m_Queue[0].Config.Logic);
+                }
             }
 
-            //clear the action queue
+            // Clear the action queue and release resources as before
+            var removedActions = ListPool<Action>.Get();
+            foreach (var action in m_Queue)
             {
-                var removedActions = ListPool<Action>.Get();
-
-                foreach (var action in m_Queue)
-                {
-                    removedActions.Add(action);
-                }
-
-                m_Queue.Clear();
-
-                foreach (var action in removedActions)
-                {
-                    TryReturnAction(action);
-                }
-
-                ListPool<Action>.Release(removedActions);
+                removedActions.Add(action);
             }
-
+            m_Queue.Clear();
+            foreach (var action in removedActions)
+            {
+                TryReturnAction(action);
+            }
+            ListPool<Action>.Release(removedActions);
 
             if (cancelNonBlocking)
             {
-                var removedActions = ListPool<Action>.Get();
-
+                removedActions = ListPool<Action>.Get();
                 foreach (var action in m_NonBlockingActions)
                 {
                     action.Cancel(m_ServerCharacter);
                     removedActions.Add(action);
+
+                    // Track each non-blocking action cancellation
+                    if (MetricsManager.Instance != null)
+                    {
+                        MetricsManager.Instance.TrackActionCanceled(m_ServerCharacter.NetworkObjectId, action.Config.Logic);
+                    }
                 }
                 m_NonBlockingActions.Clear();
-
                 foreach (var action in removedActions)
                 {
                     TryReturnAction(action);
                 }
-
                 ListPool<Action>.Release(removedActions);
             }
         }
@@ -178,7 +190,6 @@ namespace Unity.BossRoom.Gameplay.Actions
                     && m_LastUsedTimestamps.TryGetValue(m_Queue[0].ActionID, out float lastTimeUsed)
                     && Time.time - lastTimeUsed < reuseTime)
                 {
-                    // we've already started one of these too recently
                     AdvanceQueue(false); // note: this will call StartAction() recursively if there's more stuff in the queue ...
                     return;              // ... so it's important not to try to do anything more here
                 }
@@ -190,28 +201,22 @@ namespace Unity.BossRoom.Gameplay.Actions
                 bool play = m_Queue[0].OnStart(m_ServerCharacter);
                 if (!play)
                 {
-                    //actions that exited out in the "Start" method will not have their End method called, by design.
                     AdvanceQueue(false); // note: this will call StartAction() recursively if there's more stuff in the queue ...
                     return;              // ... so it's important not to try to do anything more here
                 }
 
-                // if this Action is interruptible, that means movement should interrupt it... character needs to be stationary for this!
-                // So stop any movement that's already happening before we begin
                 if (m_Queue[0].Config.ActionInterruptible && !m_Movement.IsPerformingForcedMovement())
                 {
                     m_Movement.CancelMove();
                 }
 
-                // remember the moment when we successfully used this Action!
                 m_LastUsedTimestamps[m_Queue[0].ActionID] = Time.time;
 
                 if (m_Queue[0].Config.ExecTimeSeconds == 0 && m_Queue[0].Config.BlockingMode == BlockingModeType.OnlyDuringExecTime)
                 {
-                    //this is a non-blocking action with no exec time. It should never be hanging out at the front of the queue (not even for a frame),
-                    //because it could get cleared if a new Action came in in that interval.
                     m_NonBlockingActions.Add(m_Queue[0]);
-                    AdvanceQueue(false); // note: this will call StartAction() recursively if there's more stuff in the queue ...
-                    return;              // ... so it's important not to try to do anything more here
+                    AdvanceQueue(false);
+                    return;
                 }
             }
         }
@@ -415,10 +420,22 @@ namespace Unity.BossRoom.Gameplay.Actions
             if (m_Queue.Count > 0)
             {
                 m_Queue[0].BuffValue(buffType, ref buffedValue);
+
+                // Track the buff modification in MetricsManager
+                if (MetricsManager.Instance != null)
+                {
+                    MetricsManager.Instance.TrackBuffModification(m_ServerCharacter.NetworkObjectId, buffType, buffedValue);
+                }
             }
             foreach (var action in m_NonBlockingActions)
             {
                 action.BuffValue(buffType, ref buffedValue);
+
+                // Track each buff in MetricsManager
+                if (MetricsManager.Instance != null)
+                {
+                    MetricsManager.Instance.TrackBuffModification(m_ServerCharacter.NetworkObjectId, buffType, buffedValue);
+                }
             }
             return buffedValue;
         }

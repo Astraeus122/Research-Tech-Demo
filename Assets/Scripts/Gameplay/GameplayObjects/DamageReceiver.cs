@@ -14,10 +14,16 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
         [SerializeField]
         NetworkLifeState m_NetworkLifeState;
 
+        // Add a new component to collect damage metrics
+        public static event Action<ServerCharacter, int, ulong> OnMetricDamageReceived;
+
         public void ReceiveHP(ServerCharacter inflicter, int HP)
         {
             if (IsDamageable())
             {
+                // Log the damage or healing event to collect performance metrics
+                OnMetricDamageReceived?.Invoke(inflicter, HP, NetworkObjectId);
+
                 DamageReceived?.Invoke(inflicter, HP);
             }
         }

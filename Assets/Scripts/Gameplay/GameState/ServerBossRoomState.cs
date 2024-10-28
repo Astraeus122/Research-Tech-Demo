@@ -5,6 +5,7 @@ using Unity.BossRoom.ConnectionManagement;
 using Unity.BossRoom.Gameplay.GameplayObjects;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character;
 using Unity.BossRoom.Gameplay.Messages;
+using Unity.BossRoom.Gameplay.Metrics;
 using Unity.BossRoom.Infrastructure;
 using Unity.BossRoom.Utils;
 using Unity.Multiplayer.Samples.BossRoom;
@@ -118,10 +119,6 @@ namespace Unity.BossRoom.Gameplay.GameState
         {
             if (InitialSpawnDone && !PlayerServerCharacter.GetPlayerServerCharacter(clientId))
             {
-                //somebody joined after the initial spawn. This is a Late Join scenario. This player may have issues
-                //(either because multiple people are late-joining at once, or because some dynamic entities are
-                //getting spawned while joining. But that's not something we can fully address by changes in
-                //ServerBossRoomState.
                 SpawnPlayer(clientId, true);
             }
         }
@@ -142,14 +139,12 @@ namespace Unity.BossRoom.Gameplay.GameState
         {
             if (clientId != NetworkManager.Singleton.LocalClientId)
             {
-                // If a client disconnects, check for game over in case all other players are already down
                 StartCoroutine(WaitToCheckForGameOver());
             }
         }
 
         IEnumerator WaitToCheckForGameOver()
         {
-            // Wait until next frame so that the client's player character has despawned
             yield return null;
             CheckForGameOver();
         }
@@ -173,15 +168,16 @@ namespace Unity.BossRoom.Gameplay.GameState
             var playerNetworkObject = NetworkManager.Singleton.SpawnManager.GetPlayerNetworkObject(clientId);
 
             var newPlayer = Instantiate(m_PlayerPrefab, Vector3.zero, Quaternion.identity);
-
             var newPlayerCharacter = newPlayer.GetComponent<ServerCharacter>();
-
             var physicsTransform = newPlayerCharacter.physicsWrapper.Transform;
 
             if (spawnPoint != null)
             {
                 physicsTransform.SetPositionAndRotation(spawnPoint.position, spawnPoint.rotation);
             }
+
+            // Track player spawn
+            MetricsManager.Instance?.OnPlayerSpawned(clientId);
 
             var persistentPlayerExists = playerNetworkObject.TryGetComponent(out PersistentPlayer persistentPlayer);
             Assert.IsTrue(persistentPlayerExists,
@@ -225,13 +221,14 @@ namespace Unity.BossRoom.Gameplay.GameState
                 case CharacterTypeEnum.Archer:
                 case CharacterTypeEnum.Mage:
                 case CharacterTypeEnum.Rogue:
-                    // Every time a player's life state changes to fainted we check to see if game is over
                     if (message.NewLifeState == LifeState.Fainted)
                     {
+                        // Track fainted state
+                        MetricsManager.Instance?.OnLifeStateChanged(message.ClientId, message.NewLifeState);
                         CheckForGameOver();
                     }
-
                     break;
+
                 case CharacterTypeEnum.ImpBoss:
                     if (message.NewLifeState == LifeState.Dead)
                     {
@@ -245,23 +242,18 @@ namespace Unity.BossRoom.Gameplay.GameState
 
         void CheckForGameOver()
         {
-            // Check the life state of all players in the scene
             foreach (var serverCharacter in PlayerServerCharacter.GetPlayerServerCharacters())
             {
-                // if any player is alive just return
                 if (serverCharacter && serverCharacter.LifeState == LifeState.Alive)
                 {
                     return;
                 }
             }
-
-            // If we made it this far, all players are down! switch to post game
             StartCoroutine(CoroGameOver(k_LoseDelay, false));
         }
 
         void BossDefeated()
         {
-            // Boss is dead - set game won to true
             StartCoroutine(CoroGameOver(k_WinDelay, true));
         }
 
@@ -269,9 +261,10 @@ namespace Unity.BossRoom.Gameplay.GameState
         {
             m_PersistentGameState.SetWinState(gameWon ? WinState.Win : WinState.Loss);
 
-            // wait 5 seconds for game animations to finish
-            yield return new WaitForSeconds(wait);
+            // Track game state transition
+            MetricsManager.Instance?.OnGameStateChanged(gameWon ? "Win" : "Loss");
 
+            yield return new WaitForSeconds(wait);
             SceneLoaderWrapper.Instance.LoadScene("PostGame", useNetworkSceneManager: true);
         }
     }
