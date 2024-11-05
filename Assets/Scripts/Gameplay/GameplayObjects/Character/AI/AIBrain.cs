@@ -71,6 +71,7 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character.AI
         {
             if (inflicter != null && amount < 0)
             {
+                Debug.LogError("Player dealt damage");
                 Hate(inflicter);
             }
         }

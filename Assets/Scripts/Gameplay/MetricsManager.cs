@@ -96,7 +96,7 @@ namespace Unity.BossRoom.Gameplay.Metrics
         private Dictionary<ActionLogic, int> actionCountByType = new Dictionary<ActionLogic, int>();
 
         // Track player session data
-        private Dictionary<ulong, float> playerSessionTime = new Dictionary<ulong, float>();
+        public Dictionary<ulong, float> playerSessionTime = new Dictionary<ulong, float>();
         private Dictionary<ulong, DateTime> playerLoginTimes = new Dictionary<ulong, DateTime>();
 
         // Health changes (healing and damage with modifiers)
@@ -125,12 +125,14 @@ namespace Unity.BossRoom.Gameplay.Metrics
 
         // Track queue depth per character for adaptive analysis
         private Dictionary<ulong, int> actionQueueDepthByCharacter = new Dictionary<ulong, int>();
+        private Dictionary<ulong, List<float>> enemyAttackTimestamps = new Dictionary<ulong, List<float>>();
 
 
         void OnEnable()
         {
             // Subscribe to damage events from DamageReceiver
             DamageReceiver.OnMetricDamageReceived += TrackDamage;
+            DamageReceiver.OnMetricHealingReceived += TrackHealing; // Subscribe to healing
 
             // Subscribe to breakable events from EnemyPortal objects
             foreach (var portal in FindObjectsOfType<EnemyPortal>())
@@ -234,6 +236,7 @@ namespace Unity.BossRoom.Gameplay.Metrics
         {
             // Unsubscribe from damage events from DamageReceiver
             DamageReceiver.OnMetricDamageReceived -= TrackDamage;
+            DamageReceiver.OnMetricHealingReceived -= TrackHealing; // Unsubscribe from healing
 
             // Unsubscribe from breakable events from EnemyPortal objects
             foreach (var portal in FindObjectsOfType<EnemyPortal>())
@@ -795,6 +798,31 @@ namespace Unity.BossRoom.Gameplay.Metrics
             buffUsageByCharacter[characterId][buffType]++;
             Debug.Log($"Character {characterId} used buff type {buffType}. Total usage: {buffUsageByCharacter[characterId][buffType]}");
         }
+
+        // Track each attack by an enemy
+        public void TrackEnemyAttack(ulong enemyId)
+        {
+            if (!enemyAttackTimestamps.ContainsKey(enemyId))
+            {
+                enemyAttackTimestamps[enemyId] = new List<float>();
+            }
+
+            enemyAttackTimestamps[enemyId].Add(Time.time);
+        }
+
+        // Calculate average attack frequency (attacks per minute) for an enemy
+        public float GetEnemyAttackFrequency(ulong enemyId)
+        {
+            if (!enemyAttackTimestamps.ContainsKey(enemyId) || enemyAttackTimestamps[enemyId].Count == 0)
+            {
+                return 0f;
+            }
+
+            float totalTime = Time.time - enemyAttackTimestamps[enemyId][0];
+            int attackCount = enemyAttackTimestamps[enemyId].Count;
+
+            return (totalTime > 0) ? (attackCount / (totalTime / 60f)) : 0f;
+        }
         public void TrackActionQueueDepth(ulong characterId, int queueDepth)
         {
             actionQueueDepthByCharacter[characterId] = queueDepth;
@@ -820,6 +848,43 @@ namespace Unity.BossRoom.Gameplay.Metrics
         public int GetCurrentQueueDepth(ulong characterId)
         {
             return actionQueueDepthByCharacter.TryGetValue(characterId, out int depth) ? depth : 0;
+        }
+        public int GetDeathCount(ulong playerId)
+        {
+            return healthDepletedCount.TryGetValue(playerId, out int count) ? count : 0;
+        }
+
+        public float GetPlayTime(ulong playerId)
+        {
+            return playerSessionTime.TryGetValue(playerId, out float time) ? time : 0f;
+        }
+
+        public int GetTotalDamageTaken(ulong playerId)
+        {
+            return damageTakenByCharacter.TryGetValue(playerId, out int damage) ? damage : 0;
+        }
+
+        public int GetMeleeAttacks(ulong playerId)
+        {
+            return meleeAttacksPerformedByCharacter.TryGetValue(playerId, out int attacks) ? attacks : 0;
+        }
+
+        public int GetMeleeHits(ulong playerId)
+        {
+            return meleeHitsByCharacter.TryGetValue(playerId, out int hits) ? hits : 0;
+        }
+
+        public int GetEnemiesKilled(ulong playerId)
+        {
+            return enemiesKilledByCharacter.TryGetValue(playerId, out int kills) ? kills : 0;
+        }
+        public int GetHealingReceived(ulong characterId)
+        {
+            return healingReceivedByCharacter.TryGetValue(characterId, out int healingAmount) ? healingAmount : 0;
+        }
+        private void TrackHealing(ServerCharacter healer, int healingAmount, ulong receiverId)
+        {
+            TrackHealingReceived(receiverId, healingAmount);
         }
 
     }

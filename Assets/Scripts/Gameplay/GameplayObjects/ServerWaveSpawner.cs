@@ -94,9 +94,16 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
         // the currently-spawned entities. We only bother to track these if m_MaxActiveSpawns is non-zero
         List<NetworkObject> m_ActiveSpawns = new List<NetworkObject>();
 
+        [SerializeField]
+        private float spawnRateMultiplier = 1.0f; // Default multiplier
+
         void Awake()
         {
             m_Transform = transform;
+        }
+        public void SetSpawnRateMultiplier(float multiplier)
+        {
+            spawnRateMultiplier = multiplier;
         }
 
         public override void OnNetworkSpawn()
@@ -176,26 +183,6 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
         /// Once all waves are completed, it waits a restart time before termination.
         /// </summary>
         /// <returns></returns>
-        IEnumerator SpawnWaves()
-        {
-            m_WaveIndex = 0;
-
-            while (m_WaveIndex < m_NumberOfWaves)
-            {
-                yield return SpawnWave();
-
-                yield return new WaitForSeconds(m_TimeBetweenWaves);
-            }
-
-            yield return new WaitForSeconds(m_RestartDelay);
-
-            m_WaveSpawning = null;
-        }
-
-        /// <summary>
-        /// Coroutine that spawns a wave of prefab clones, with some time between spawns.
-        /// </summary>
-        /// <returns></returns>
         IEnumerator SpawnWave()
         {
             for (int i = 0; i < m_SpawnsPerWave; i++)
@@ -206,10 +193,27 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
                     m_ActiveSpawns.Add(newSpawn);
                 }
 
-                yield return new WaitForSeconds(m_TimeBetweenSpawns);
+                // Adjust time between spawns with the multiplier
+                yield return new WaitForSeconds(m_TimeBetweenSpawns / spawnRateMultiplier);
             }
 
             m_WaveIndex++;
+        }
+
+        IEnumerator SpawnWaves()
+        {
+            m_WaveIndex = 0;
+
+            while (m_WaveIndex < m_NumberOfWaves)
+            {
+                yield return SpawnWave();
+
+                // Adjust time between waves with the multiplier
+                yield return new WaitForSeconds(m_TimeBetweenWaves / spawnRateMultiplier);
+            }
+
+            yield return new WaitForSeconds(m_RestartDelay / spawnRateMultiplier);
+            m_WaveSpawning = null;
         }
 
         /// <summary>
