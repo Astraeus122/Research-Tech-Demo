@@ -887,5 +887,23 @@ namespace Unity.BossRoom.Gameplay.Metrics
             TrackHealingReceived(receiverId, healingAmount);
         }
 
+        public float GetDeathRatePerMinute(ulong playerId)
+        {
+            float playTime = GetPlayTime(playerId);
+            return (playTime > 0) ? (GetDeathCount(playerId) / (playTime / 60f)) : 0f;
+        }
+
+        public float GetEnemiesKilledPerMinute(ulong playerId)
+        {
+            float playTime = GetPlayTime(playerId);
+            return (playTime > 0) ? (GetEnemiesKilled(playerId) / (playTime / 60f)) : 0f;
+        }
+
+        public float GetHealingReceivedPerMinute(ulong playerId)
+        {
+            float playTime = GetPlayTime(playerId);
+            return (playTime > 0) ? (GetHealingReceived(playerId) / (playTime / 60f)) : 0f;
+        }
+
     }
 }
