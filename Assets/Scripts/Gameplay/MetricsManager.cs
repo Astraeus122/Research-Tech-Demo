@@ -4,6 +4,7 @@ using Unity.BossRoom.Gameplay.GameplayObjects;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character;
 using Unity.BossRoom.Gameplay.Actions;
 using UnityEngine;
+using System.IO;
 
 namespace Unity.BossRoom.Gameplay.Metrics
 {
@@ -20,7 +21,17 @@ namespace Unity.BossRoom.Gameplay.Metrics
             }
             Instance = this;
             DontDestroyOnLoad(gameObject);
+
+            // Set the metrics folder path within the project
+            metricsFolderPath = Path.Combine(Application.dataPath, "Scripts", "Metrics");
+
+            // Ensure the directory exists
+            if (!Directory.Exists(metricsFolderPath))
+            {
+                Directory.CreateDirectory(metricsFolderPath);
+            }
         }
+
 
         // Metrics for damage taken by each character
         private Dictionary<ulong, int> damageTakenByCharacter = new Dictionary<ulong, int>();
@@ -127,6 +138,246 @@ namespace Unity.BossRoom.Gameplay.Metrics
         private Dictionary<ulong, int> actionQueueDepthByCharacter = new Dictionary<ulong, int>();
         private Dictionary<ulong, List<float>> enemyAttackTimestamps = new Dictionary<ulong, List<float>>();
 
+
+        // Session management variables
+        private int currentSessionNumber = 1;
+        private GameSessionMetrics currentSessionMetrics;
+        private string metricsFolderPath;
+
+        // Helper method to get the file path for the current session
+        private string GetSessionFilePath(int sessionNumber)
+        {
+            string fileName = $"GameSession_{sessionNumber}.json";
+            return Path.Combine(metricsFolderPath, fileName);
+        }
+
+        private void Start()
+        {
+            StartNewSession();
+        }
+
+        private void StartNewSession()
+        {
+            currentSessionMetrics = new GameSessionMetrics
+            {
+                SessionNumber = currentSessionNumber,
+                DamageTakenByCharacter = new Dictionary<ulong, int>(damageTakenByCharacter),
+                EnemiesKilledByCharacter = new Dictionary<ulong, int>(enemiesKilledByCharacter),
+                PortalBreakCounts = new Dictionary<string, int>(portalBreakCounts),
+                HealthDepletedCount = new Dictionary<ulong, int>(healthDepletedCount),
+                HealthReplenishedCount = new Dictionary<ulong, int>(healthReplenishedCount),
+                FloorSwitchActivationCount = floorSwitchActivationCount,
+                TossedItemDetonationCount = tossedItemDetonationCount,
+                TossedItemDamageByCharacter = new Dictionary<ulong, int>(tossedItemDamageByCharacter),
+                PlayerSpawnCount = playerSpawnCount,
+                PlayerFaintedCount = new Dictionary<ulong, int>(playerFaintedCount),
+                ActionsPerformedByCharacter = ConvertActionsPerformedByCharacter(),
+                FullyChargedActionsByCharacter = new Dictionary<ulong, int>(fullyChargedActionsByCharacter),
+                PartiallyChargedActionsByCharacter = new Dictionary<ulong, int>(partiallyChargedActionsByCharacter),
+                AoeHitsByCharacter = new Dictionary<ulong, int>(aoeHitsByCharacter),
+                ProjectilesLaunchedByCharacter = new Dictionary<ulong, int>(projectilesLaunchedByCharacter),
+                ProjectilesHitByCharacter = new Dictionary<ulong, int>(projectilesHitByCharacter),
+                ShieldActionsUsedByCharacter = new Dictionary<ulong, int>(shieldActionsUsedByCharacter),
+                FullyChargedShieldsByCharacter = new Dictionary<ulong, int>(fullyChargedShieldsByCharacter),
+                DashAttacksPerformedByCharacter = new Dictionary<ulong, int>(dashAttacksPerformedByCharacter),
+                DashAttackEnemiesHitByCharacter = new Dictionary<ulong, int>(dashAttackEnemiesHitByCharacter),
+                MeleeAttacksPerformedByCharacter = new Dictionary<ulong, int>(meleeAttacksPerformedByCharacter),
+                MeleeHitsByCharacter = new Dictionary<ulong, int>(meleeHitsByCharacter),
+                RaybeamActionsPerformedByCharacter = new Dictionary<ulong, int>(raybeamActionsPerformedByCharacter),
+                RaybeamHitsByCharacter = new Dictionary<ulong, int>(raybeamHitsByCharacter),
+                TargetAcquisitionCount = new Dictionary<ulong, int>(targetAcquisitionCount),
+                TargetEngagementDuration = new Dictionary<ulong, float>(targetEngagementDuration),
+                TrampleEnemiesHitCount = new Dictionary<ulong, int>(trampleEnemiesHitCount),
+                TrampleDamageDealt = new Dictionary<ulong, int>(trampleDamageDealt),
+                TrampleStunOccurrences = new Dictionary<ulong, int>(trampleStunOccurrences),
+                DamageTakenByCharacterClass = ConvertCharacterTypeEnumDictionary(damageTakenByCharacterClass),
+                DamageDealtByCharacterClass = ConvertCharacterTypeEnumDictionary(damageDealtByCharacterClass),
+                AbilityUsesByCharacterClass = ConvertCharacterTypeEnumDictionary(abilityUsesByCharacterClass),
+                ActionCountByType = ConvertActionLogicDictionary(actionCountByType),
+                PlayerSessionTime = new Dictionary<ulong, float>(playerSessionTime),
+                HealingReceivedByCharacter = new Dictionary<ulong, int>(healingReceivedByCharacter),
+                ModifiedDamageReceivedByCharacter = new Dictionary<ulong, int>(modifiedDamageReceivedByCharacter),
+                BuffValuesByCharacter = ConvertBuffValuesByCharacter(),
+                ActionStartsByCharacter = new Dictionary<ulong, int>(actionStartsByCharacter),
+                ActionInterruptsByCharacter = new Dictionary<ulong, int>(actionInterruptsByCharacter),
+                ActionStopsByCharacter = new Dictionary<ulong, int>(actionStopsByCharacter),
+                MovementStatusChangesByCharacter = new Dictionary<ulong, int>(movementStatusChangesByCharacter),
+                AiDecisionsByNpc = new Dictionary<ulong, int>(aiDecisionsByNpc),
+                ActionCancellations = new Dictionary<ulong, int>(actionCancellations),
+                BuffUsageByCharacter = ConvertBuffUsageByCharacter(),
+                ActionQueueDepthByCharacter = new Dictionary<ulong, int>(actionQueueDepthByCharacter)
+            };
+
+            // Start session logic
+            Debug.Log($"Starting session {currentSessionNumber}");
+        }
+
+        private void EndCurrentSession()
+        {
+            SaveMetricsToFile();
+            currentSessionNumber++;
+            ResetMetrics();
+            StartNewSession();
+        }
+
+        private void SaveMetricsToFile()
+        {
+            string filePath = GetSessionFilePath(currentSessionMetrics.SessionNumber);
+
+            try
+            {
+                // Optional: Ensure the directory exists (already handled in Awake)
+                string directoryPath = Path.GetDirectoryName(filePath);
+                if (!Directory.Exists(directoryPath))
+                {
+                    Directory.CreateDirectory(directoryPath);
+                }
+
+                string json = JsonUtility.ToJson(currentSessionMetrics, true);
+                File.WriteAllText(filePath, json);
+                Debug.Log($"Metrics for Session {currentSessionMetrics.SessionNumber} saved to {filePath}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to save metrics to file: {ex.Message}");
+            }
+        }
+
+        private void ResetMetrics()
+        {
+            // Reset all metrics dictionaries and counters
+            damageTakenByCharacter.Clear();
+            enemiesKilledByCharacter.Clear();
+            portalBreakCounts.Clear();
+            healthDepletedCount.Clear();
+            healthReplenishedCount.Clear();
+            floorSwitchActivationCount = 0;
+            tossedItemDetonationCount = 0;
+            tossedItemDamageByCharacter.Clear();
+            playerSpawnCount = 0;
+            playerFaintedCount.Clear();
+            actionsPerformedByCharacter.Clear();
+            fullyChargedActionsByCharacter.Clear();
+            partiallyChargedActionsByCharacter.Clear();
+            aoeHitsByCharacter.Clear();
+            projectilesLaunchedByCharacter.Clear();
+            projectilesHitByCharacter.Clear();
+            shieldActionsUsedByCharacter.Clear();
+            fullyChargedShieldsByCharacter.Clear();
+            dashAttacksPerformedByCharacter.Clear();
+            dashAttackEnemiesHitByCharacter.Clear();
+            meleeAttacksPerformedByCharacter.Clear();
+            meleeHitsByCharacter.Clear();
+            raybeamActionsPerformedByCharacter.Clear();
+            raybeamHitsByCharacter.Clear();
+            targetAcquisitionCount.Clear();
+            targetEngagementDuration.Clear();
+            trampleEnemiesHitCount.Clear();
+            trampleDamageDealt.Clear();
+            trampleStunOccurrences.Clear();
+            damageTakenByCharacterClass.Clear();
+            damageDealtByCharacterClass.Clear();
+            abilityUsesByCharacterClass.Clear();
+            actionCountByType.Clear();
+            playerSessionTime.Clear();
+            healingReceivedByCharacter.Clear();
+            modifiedDamageReceivedByCharacter.Clear();
+            buffValuesByCharacter.Clear();
+            actionStartsByCharacter.Clear();
+            actionInterruptsByCharacter.Clear();
+            actionStopsByCharacter.Clear();
+            movementStatusChangesByCharacter.Clear();
+            aiDecisionsByNpc.Clear();
+            actionCancellations.Clear();
+            buffUsageByCharacter.Clear();
+            actionQueueDepthByCharacter.Clear();
+        }
+
+        // Modify OnGameStateChanged to handle session start and end
+        public void OnGameStateChanged(string gameState)
+        {
+            Debug.Log($"Game state changed to {gameState}.");
+
+            if (gameState.Equals("GameStart", StringComparison.OrdinalIgnoreCase))
+            {
+                StartNewSession();
+            }
+            else if (gameState.Equals("GameEnd", StringComparison.OrdinalIgnoreCase))
+            {
+                EndCurrentSession();
+            }
+        }
+
+        // Conversion methods to handle serialization of complex types
+        private Dictionary<ulong, Dictionary<string, int>> ConvertActionsPerformedByCharacter()
+        {
+            var newDict = new Dictionary<ulong, Dictionary<string, int>>();
+            foreach (var kvp in actionsPerformedByCharacter)
+            {
+                newDict[kvp.Key] = new Dictionary<string, int>();
+                foreach (var actionKvp in kvp.Value)
+                {
+                    newDict[kvp.Key].Add(actionKvp.Key.ToString(), actionKvp.Value);
+                }
+            }
+            return newDict;
+        }
+
+        private Dictionary<string, int> ConvertCharacterTypeEnumDictionary(Dictionary<CharacterTypeEnum, int> originalDict)
+        {
+            var newDict = new Dictionary<string, int>();
+            foreach (var kvp in originalDict)
+            {
+                newDict[kvp.Key.ToString()] = kvp.Value;
+            }
+            return newDict;
+        }
+
+        private Dictionary<string, int> ConvertActionLogicDictionary(Dictionary<ActionLogic, int> originalDict)
+        {
+            var newDict = new Dictionary<string, int>();
+            foreach (var kvp in originalDict)
+            {
+                newDict[kvp.Key.ToString()] = kvp.Value;
+            }
+            return newDict;
+        }
+
+        private Dictionary<ulong, Dictionary<string, float>> ConvertBuffValuesByCharacter()
+        {
+            var newDict = new Dictionary<ulong, Dictionary<string, float>>();
+            foreach (var kvp in buffValuesByCharacter)
+            {
+                newDict[kvp.Key] = new Dictionary<string, float>();
+                foreach (var buffKvp in kvp.Value)
+                {
+                    newDict[kvp.Key].Add(buffKvp.Key.ToString(), buffKvp.Value);
+                }
+            }
+            return newDict;
+        }
+
+        private Dictionary<ulong, Dictionary<string, int>> ConvertBuffUsageByCharacter()
+        {
+            var newDict = new Dictionary<ulong, Dictionary<string, int>>();
+            foreach (var kvp in buffUsageByCharacter)
+            {
+                newDict[kvp.Key] = new Dictionary<string, int>();
+                foreach (var buffKvp in kvp.Value)
+                {
+                    newDict[kvp.Key].Add(buffKvp.Key.ToString(), buffKvp.Value);
+                }
+            }
+            return newDict;
+        }
+
+        private void OnApplicationQuit()
+        {
+            if (currentSessionMetrics != null)
+            {
+                SaveMetricsToFile();
+            }
+        }
 
         void OnEnable()
         {
@@ -612,12 +863,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
                 playerFaintedCount[playerId]++;
                 Debug.Log($"Player {playerId} fainted {playerFaintedCount[playerId]} times.");
             }
-        }
-
-        // Track game state changes (e.g., win/loss)
-        public void OnGameStateChanged(string gameState)
-        {
-            Debug.Log($"Game state changed to {gameState}.");
         }
 
         // Track target acquisition

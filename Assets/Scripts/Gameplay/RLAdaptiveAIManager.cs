@@ -53,7 +53,6 @@ namespace Unity.BossRoom.Gameplay.AI
             Instance = this;
             DontDestroyOnLoad(gameObject);
 
-            // Adjusted file path
             qTableFilePath = Application.dataPath + "/Scripts/RLAdaptiveAIManager/QTable.json";
         }
 
