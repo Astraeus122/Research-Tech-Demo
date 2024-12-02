@@ -3,6 +3,7 @@ using Unity.BossRoom.ConnectionManagement;
 using Unity.BossRoom.Gameplay.Actions;
 using Unity.BossRoom.Gameplay.Configuration;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character.AI;
+using Unity.BossRoom.Gameplay.Metrics;
 using Unity.Multiplayer.Samples.BossRoom;
 using Unity.Netcode;
 using UnityEngine;
@@ -240,6 +241,13 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         {
             HitPoints = CharacterClass.BaseHP.Value;
 
+            // Notify MetricsManager of max health
+            if (!IsNpc)
+            {
+                MetricsManager.Instance?.SetPlayerMaxHealth(HitPoints);
+                MetricsManager.Instance?.UpdatePlayerHealth(HitPoints);
+            }
+
             if (!IsNpc)
             {
                 SessionPlayerData? sessionPlayerData = SessionManager<SessionPlayerData>.Instance.GetPlayerData(OwnerClientId);
@@ -297,7 +305,7 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
         /// <param name="HP">The HP to receive. Positive value is healing. Negative is damage.  </param>
         void ReceiveHP(ServerCharacter inflicter, int HP)
         {
-            //to our own effects, and modify the damage or healing as appropriate. But in this game, we just take it straight.
+            // Process healing or damage
             if (HP > 0)
             {
                 m_ServerActionPlayer.OnGameplayActivity(Action.GameplayActivity.Healed);
@@ -307,11 +315,7 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
             else
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                // Don't apply damage if god mode is on
-                if (NetLifeState.IsGodMode.Value)
-                {
-                    return;
-                }
+                if (NetLifeState.IsGodMode.Value) return; // Skip damage in god mode
 #endif
 
                 m_ServerActionPlayer.OnGameplayActivity(Action.GameplayActivity.AttackedByEnemy);
@@ -323,14 +327,17 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
 
             HitPoints = Mathf.Clamp(HitPoints + HP, 0, CharacterClass.BaseHP.Value);
 
+            if (!IsNpc)
+            {
+                MetricsManager.Instance?.UpdatePlayerHealth(HitPoints);
+            }
+
             if (m_AIBrain != null)
             {
-                //let the brain know about the modified amount of damage we received.
                 m_AIBrain.ReceiveHP(inflicter, HP);
             }
 
-            //we can't currently heal a dead character back to Alive state.
-            //that's handled by a separate function.
+            // Handle death
             if (HitPoints <= 0)
             {
                 if (IsNpc)
@@ -341,6 +348,12 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects.Character
                     }
 
                     LifeState = LifeState.Dead;
+
+                    // Track kill in MetricsManager
+                    if (inflicter != null)
+                    {
+                        MetricsManager.Instance?.TrackEnemyKilled(inflicter.OwnerClientId, gameObject);
+                    }
                 }
                 else
                 {

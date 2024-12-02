@@ -144,6 +144,15 @@ namespace Unity.BossRoom.Gameplay.Metrics
         private GameSessionMetrics currentSessionMetrics;
         private string metricsFolderPath;
 
+        private int playerEnemiesKilled = 0;
+        private int playerTotalDamageReceived = 0;
+        private int playerTotalHealingReceived = 0;
+
+        private int playerMaxHealthTracked = 0; // To track only once at the start of the game
+        private int playerCurrentHealth = 0;    // To track current health
+        private float playerHealthPercentage = 0f; // To store the percentage of health remaining
+        private ulong playerNetworkObjectId;    // To store the player's NetworkObjectId
+
         // Helper method to get the file path for the current session
         private string GetSessionFilePath(int sessionNumber)
         {
@@ -414,75 +423,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
             }
         }
 
-        public void TrackDamageByCharacterClass(CharacterTypeEnum characterClass, int damage)
-        {
-            if (!damageTakenByCharacterClass.ContainsKey(characterClass))
-            {
-                damageTakenByCharacterClass[characterClass] = 0;
-            }
-            damageTakenByCharacterClass[characterClass] += damage;
-
-            Debug.Log($"{characterClass} has taken {damageTakenByCharacterClass[characterClass]} total damage.");
-        }
-
-        public void TrackDamageDealtByCharacterClass(CharacterTypeEnum characterClass, int damage)
-        {
-            if (!damageDealtByCharacterClass.ContainsKey(characterClass))
-            {
-                damageDealtByCharacterClass[characterClass] = 0;
-            }
-            damageDealtByCharacterClass[characterClass] += damage;
-
-            Debug.Log($"{characterClass} has dealt {damageDealtByCharacterClass[characterClass]} total damage.");
-        }
-
-        public void TrackAbilityUseByCharacterClass(CharacterTypeEnum characterClass)
-        {
-            if (!abilityUsesByCharacterClass.ContainsKey(characterClass))
-            {
-                abilityUsesByCharacterClass[characterClass] = 0;
-            }
-            abilityUsesByCharacterClass[characterClass]++;
-
-            Debug.Log($"{characterClass} has used abilities {abilityUsesByCharacterClass[characterClass]} times.");
-        }
-
-        public void TrackActionUsage(ActionLogic actionLogic)
-        {
-            if (!actionCountByType.ContainsKey(actionLogic))
-            {
-                actionCountByType[actionLogic] = 0;
-            }
-            actionCountByType[actionLogic]++;
-
-            Debug.Log($"Action {actionLogic} performed {actionCountByType[actionLogic]} times.");
-        }
-
-        public void TrackPlayerLogin(ulong playerId)
-        {
-            if (!playerLoginTimes.ContainsKey(playerId))
-            {
-                playerLoginTimes[playerId] = DateTime.Now;
-                playerSessionTime[playerId] = 0f; // Initialize session time
-            }
-
-            Debug.Log($"Player {playerId} logged in at {playerLoginTimes[playerId]}.");
-        }
-
-        public void TrackPlayerLogout(ulong playerId)
-        {
-            if (playerLoginTimes.ContainsKey(playerId))
-            {
-                DateTime loginTime = playerLoginTimes[playerId];
-                float sessionDuration = (float)(DateTime.Now - loginTime).TotalSeconds;
-                playerSessionTime[playerId] += sessionDuration;
-                playerLoginTimes.Remove(playerId);
-
-                Debug.Log($"Player {playerId} logged out. Session duration: {sessionDuration} seconds. Total playtime: {playerSessionTime[playerId]} seconds.");
-            }
-        }
-
-
         void OnDisable()
         {
             // Unsubscribe from damage events from DamageReceiver
@@ -519,18 +459,22 @@ namespace Unity.BossRoom.Gameplay.Metrics
         }
 
         // Track damage metrics from damage received events
-        private void TrackDamage(ServerCharacter inflicter, int HP, ulong receiverId)
+        public void TrackDamage(ServerCharacter inflicter, int HP, ulong receiverId)
         {
             if (HP < 0) // Damage is taken (negative value)
             {
+                if (receiverId == 0) // If the receiver is the player
+                {
+                    playerTotalDamageReceived += -HP; // Convert to positive damage value
+                    Debug.Log($"Player has taken {playerTotalDamageReceived} total damage.");
+                    UpdatePlayerHealth(playerTotalDamageReceived);
+                }
+
                 if (!damageTakenByCharacter.ContainsKey(receiverId))
                 {
                     damageTakenByCharacter[receiverId] = 0;
                 }
-                damageTakenByCharacter[receiverId] += -HP; // Convert to positive damage value
-
-                // Optional: Print damage metrics for debugging
-                Debug.Log($"Character {receiverId} has taken {damageTakenByCharacter[receiverId]} total damage.");
+                damageTakenByCharacter[receiverId] += -HP;
             }
         }
 
@@ -610,238 +554,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
             actionsPerformedByCharacter[characterId][actionLogic]++;
 
             Debug.Log($"Character {characterId} performed action {actionLogic}. Total count: {actionsPerformedByCharacter[characterId][actionLogic]}");
-        }
-
-        // Track charged actions
-        public void TrackChargedAction(ulong characterId, bool isFullyCharged)
-        {
-            if (isFullyCharged)
-            {
-                if (!fullyChargedActionsByCharacter.ContainsKey(characterId))
-                {
-                    fullyChargedActionsByCharacter[characterId] = 0;
-                }
-                fullyChargedActionsByCharacter[characterId]++;
-                Debug.Log($"Character {characterId} performed a fully charged action. Total count: {fullyChargedActionsByCharacter[characterId]}");
-            }
-            else
-            {
-                if (!partiallyChargedActionsByCharacter.ContainsKey(characterId))
-                {
-                    partiallyChargedActionsByCharacter[characterId] = 0;
-                }
-                partiallyChargedActionsByCharacter[characterId]++;
-                Debug.Log($"Character {characterId} performed a partially charged action. Total count: {partiallyChargedActionsByCharacter[characterId]}");
-            }
-        }
-
-        // Track shield actions
-        public void TrackShieldAction(ulong characterId, bool isFullyCharged)
-        {
-            if (!shieldActionsUsedByCharacter.ContainsKey(characterId))
-            {
-                shieldActionsUsedByCharacter[characterId] = 0;
-            }
-            shieldActionsUsedByCharacter[characterId]++;
-
-            if (isFullyCharged)
-            {
-                if (!fullyChargedShieldsByCharacter.ContainsKey(characterId))
-                {
-                    fullyChargedShieldsByCharacter[characterId] = 0;
-                }
-                fullyChargedShieldsByCharacter[characterId]++;
-            }
-
-            Debug.Log($"Character {characterId} used shield action. Total used: {shieldActionsUsedByCharacter[characterId]}, Fully Charged: {fullyChargedShieldsByCharacter.GetValueOrDefault(characterId)}");
-        }
-
-        // Track dash attack usage
-        public void TrackDashAttack(ulong characterId, int enemiesHit)
-        {
-            if (!dashAttacksPerformedByCharacter.ContainsKey(characterId))
-            {
-                dashAttacksPerformedByCharacter[characterId] = 0;
-            }
-            dashAttacksPerformedByCharacter[characterId]++;
-
-            if (!dashAttackEnemiesHitByCharacter.ContainsKey(characterId))
-            {
-                dashAttackEnemiesHitByCharacter[characterId] = 0;
-            }
-            dashAttackEnemiesHitByCharacter[characterId] += enemiesHit;
-
-            Debug.Log($"Character {characterId} performed dash attack. Total performed: {dashAttacksPerformedByCharacter[characterId]}, Enemies Hit: {dashAttackEnemiesHitByCharacter[characterId]}");
-        }
-
-        // Track projectile launches and hits
-        public void TrackProjectileLaunch(ulong characterId)
-        {
-            if (!projectilesLaunchedByCharacter.ContainsKey(characterId))
-            {
-                projectilesLaunchedByCharacter[characterId] = 0;
-            }
-            projectilesLaunchedByCharacter[characterId]++;
-            Debug.Log($"Character {characterId} launched a projectile. Total launched: {projectilesLaunchedByCharacter[characterId]}");
-        }
-
-        public void TrackProjectileHit(ulong characterId)
-        {
-            if (!projectilesHitByCharacter.ContainsKey(characterId))
-            {
-                projectilesHitByCharacter[characterId] = 0;
-            }
-            projectilesHitByCharacter[characterId]++;
-            Debug.Log($"Character {characterId} hit a target with a projectile. Total hits: {projectilesHitByCharacter[characterId]}");
-        }
-
-        // Track melee attacks
-        public void TrackMeleeAttack(ulong characterId, bool wasHit)
-        {
-            if (!meleeAttacksPerformedByCharacter.ContainsKey(characterId))
-            {
-                meleeAttacksPerformedByCharacter[characterId] = 0;
-            }
-            meleeAttacksPerformedByCharacter[characterId]++;
-
-            if (wasHit)
-            {
-                if (!meleeHitsByCharacter.ContainsKey(characterId))
-                {
-                    meleeHitsByCharacter[characterId] = 0;
-                }
-                meleeHitsByCharacter[characterId]++;
-            }
-
-            Debug.Log($"Character {characterId} performed melee attack. Total performed: {meleeAttacksPerformedByCharacter[characterId]}, Hits: {meleeHitsByCharacter.GetValueOrDefault(characterId)}");
-        }
-
-        // Track raybeam actions
-        public void TrackRaybeamAction(ulong characterId, bool wasHit)
-        {
-            if (!raybeamActionsPerformedByCharacter.ContainsKey(characterId))
-            {
-                raybeamActionsPerformedByCharacter[characterId] = 0;
-            }
-            raybeamActionsPerformedByCharacter[characterId]++;
-
-            if (wasHit)
-            {
-                if (!raybeamHitsByCharacter.ContainsKey(characterId))
-                {
-                    raybeamHitsByCharacter[characterId] = 0;
-                }
-                raybeamHitsByCharacter[characterId]++;
-            }
-
-            Debug.Log($"Character {characterId} performed raybeam attack. Total performed: {raybeamActionsPerformedByCharacter[characterId]}, Hits: {raybeamHitsByCharacter.GetValueOrDefault(characterId)}");
-        }
-
-        // Method to be called periodically or during specific events to gather data
-        public void LogMetrics()
-        {
-            foreach (var entry in damageTakenByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Damage Taken: {entry.Value}");
-            }
-
-            foreach (var entry in portalBreakCounts)
-            {
-                Debug.Log($"{entry.Key}: Total Breakables Broken: {entry.Value}");
-            }
-
-            foreach (var entry in healthDepletedCount)
-            {
-                Debug.Log($"Character {entry.Key}: Total Times Health Depleted: {entry.Value}");
-            }
-
-            foreach (var entry in healthReplenishedCount)
-            {
-                Debug.Log($"Character {entry.Key}: Total Times Health Replenished: {entry.Value}");
-            }
-
-            Debug.Log($"Total Floor Switch Activations: {floorSwitchActivationCount}");
-            Debug.Log($"Total Tossed Item Detonations: {tossedItemDetonationCount}");
-            Debug.Log($"Total Player Spawns: {playerSpawnCount}");
-
-            foreach (var entry in playerFaintedCount)
-            {
-                Debug.Log($"Player {entry.Key}: Total Times Fainted: {entry.Value}");
-            }
-
-            foreach (var characterEntry in actionsPerformedByCharacter)
-            {
-                foreach (var actionEntry in characterEntry.Value)
-                {
-                    Debug.Log($"Character {characterEntry.Key}: Action {actionEntry.Key} performed {actionEntry.Value} times");
-                }
-            }
-
-            foreach (var entry in fullyChargedActionsByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Fully Charged Actions: {entry.Value}");
-            }
-
-            foreach (var entry in partiallyChargedActionsByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Partially Charged Actions: {entry.Value}");
-            }
-
-            foreach (var entry in aoeHitsByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total AoE Hits: {entry.Value}");
-            }
-
-            foreach (var entry in projectilesLaunchedByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Projectiles Launched: {entry.Value}");
-            }
-
-            foreach (var entry in projectilesHitByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Projectiles Hit: {entry.Value}");
-            }
-
-            foreach (var entry in shieldActionsUsedByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Shield Actions Used: {entry.Value}, Fully Charged: {fullyChargedShieldsByCharacter.GetValueOrDefault(entry.Key)}");
-            }
-
-            foreach (var entry in dashAttacksPerformedByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Dash Attacks Performed: {entry.Value}, Enemies Hit: {dashAttackEnemiesHitByCharacter.GetValueOrDefault(entry.Key)}");
-            }
-
-            foreach (var entry in meleeAttacksPerformedByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Melee Attacks Performed: {entry.Value}, Hits: {meleeHitsByCharacter.GetValueOrDefault(entry.Key)}");
-            }
-
-            foreach (var entry in raybeamActionsPerformedByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Total Raybeam Actions Performed: {entry.Value}, Hits: {raybeamHitsByCharacter.GetValueOrDefault(entry.Key)}");
-            }
-
-            // Log action cancellations
-            foreach (var entry in actionCancellations)
-            {
-                Debug.Log($"Character {entry.Key}: Total Action Cancellations: {entry.Value}");
-            }
-
-            // Log buff usage counts
-            foreach (var characterEntry in buffUsageByCharacter)
-            {
-                foreach (var buffEntry in characterEntry.Value)
-                {
-                    Debug.Log($"Character {characterEntry.Key}: Buff {buffEntry.Key} used {buffEntry.Value} times");
-                }
-            }
-
-            // Log queue depth per character
-            foreach (var entry in actionQueueDepthByCharacter)
-            {
-                Debug.Log($"Character {entry.Key}: Current Action Queue Depth: {entry.Value}");
-            }
         }
 
         // Track player spawns
@@ -930,28 +642,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
             Debug.Log($"Character {characterId} was stunned during a trample. Total stuns: {trampleStunOccurrences[characterId]}");
         }
 
-        public void TrackHealingReceived(ulong characterId, int healingAmount)
-        {
-            if (!healingReceivedByCharacter.ContainsKey(characterId))
-            {
-                healingReceivedByCharacter[characterId] = 0;
-            }
-            healingReceivedByCharacter[characterId] += healingAmount;
-
-            Debug.Log($"Character {characterId} received {healingAmount} healing. Total healing received: {healingReceivedByCharacter[characterId]}");
-        }
-
-        public void TrackModifiedDamageReceived(ulong characterId, int damageAmount)
-        {
-            if (!modifiedDamageReceivedByCharacter.ContainsKey(characterId))
-            {
-                modifiedDamageReceivedByCharacter[characterId] = 0;
-            }
-            modifiedDamageReceivedByCharacter[characterId] += damageAmount;
-
-            Debug.Log($"Character {characterId} received {damageAmount} modified damage. Total modified damage received: {modifiedDamageReceivedByCharacter[characterId]}");
-        }
-
         public void TrackBuffModification(ulong characterId, Unity.BossRoom.Gameplay.Actions.Action.BuffableValue buffType, float value)
         {
             if (!buffValuesByCharacter.ContainsKey(characterId))
@@ -963,61 +653,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
             Debug.Log($"Character {characterId} has a buff modification for {buffType} with value {value}");
         }
 
-        public void TrackActionStart(ulong characterId)
-        {
-            if (!actionStartsByCharacter.ContainsKey(characterId))
-            {
-                actionStartsByCharacter[characterId] = 0;
-            }
-            actionStartsByCharacter[characterId]++;
-
-            Debug.Log($"Character {characterId} started an action. Total action starts: {actionStartsByCharacter[characterId]}");
-        }
-
-        public void TrackActionStop(ulong characterId)
-        {
-            if (!actionStopsByCharacter.ContainsKey(characterId))
-            {
-                actionStopsByCharacter[characterId] = 0;
-            }
-            actionStopsByCharacter[characterId]++;
-
-            Debug.Log($"Character {characterId} stopped an action. Total action stops: {actionStopsByCharacter[characterId]}");
-        }
-
-        public void TrackActionInterrupt(ulong characterId)
-        {
-            if (!actionInterruptsByCharacter.ContainsKey(characterId))
-            {
-                actionInterruptsByCharacter[characterId] = 0;
-            }
-            actionInterruptsByCharacter[characterId]++;
-
-            Debug.Log($"Character {characterId} interrupted an action. Total action interrupts: {actionInterruptsByCharacter[characterId]}");
-        }
-
-        public void TrackMovementStatusChange(ulong characterId)
-        {
-            if (!movementStatusChangesByCharacter.ContainsKey(characterId))
-            {
-                movementStatusChangesByCharacter[characterId] = 0;
-            }
-            movementStatusChangesByCharacter[characterId]++;
-
-            Debug.Log($"Character {characterId} changed movement status. Total movement status changes: {movementStatusChangesByCharacter[characterId]}");
-        }
-
-        public void TrackAiDecision(ulong npcId)
-        {
-            if (!aiDecisionsByNpc.ContainsKey(npcId))
-            {
-                aiDecisionsByNpc[npcId] = 0;
-            }
-            aiDecisionsByNpc[npcId]++;
-
-            Debug.Log($"NPC {npcId} made an AI decision. Total AI decisions: {aiDecisionsByNpc[npcId]}");
-        }
-
         public void TrackActionCanceled(ulong characterId, ActionLogic actionLogic)
         {
             if (!actionCancellations.ContainsKey(characterId))
@@ -1026,73 +661,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
             }
             actionCancellations[characterId]++;
             Debug.Log($"Character {characterId} canceled action {actionLogic}. Total cancellations: {actionCancellations[characterId]}");
-        }
-
-        public void TrackBuffUsage(ulong characterId, Unity.BossRoom.Gameplay.Actions.Action.BuffableValue buffType)
-        {
-            if (!buffUsageByCharacter.ContainsKey(characterId))
-            {
-                buffUsageByCharacter[characterId] = new Dictionary<Unity.BossRoom.Gameplay.Actions.Action.BuffableValue, int>();
-            }
-
-            if (!buffUsageByCharacter[characterId].ContainsKey(buffType))
-            {
-                buffUsageByCharacter[characterId][buffType] = 0;
-            }
-
-            buffUsageByCharacter[characterId][buffType]++;
-            Debug.Log($"Character {characterId} used buff type {buffType}. Total usage: {buffUsageByCharacter[characterId][buffType]}");
-        }
-
-        // Track each attack by an enemy
-        public void TrackEnemyAttack(ulong enemyId)
-        {
-            if (!enemyAttackTimestamps.ContainsKey(enemyId))
-            {
-                enemyAttackTimestamps[enemyId] = new List<float>();
-            }
-
-            enemyAttackTimestamps[enemyId].Add(Time.time);
-        }
-
-        // Calculate average attack frequency (attacks per minute) for an enemy
-        public float GetEnemyAttackFrequency(ulong enemyId)
-        {
-            if (!enemyAttackTimestamps.ContainsKey(enemyId) || enemyAttackTimestamps[enemyId].Count == 0)
-            {
-                return 0f;
-            }
-
-            float totalTime = Time.time - enemyAttackTimestamps[enemyId][0];
-            int attackCount = enemyAttackTimestamps[enemyId].Count;
-
-            return (totalTime > 0) ? (attackCount / (totalTime / 60f)) : 0f;
-        }
-        public void TrackActionQueueDepth(ulong characterId, int queueDepth)
-        {
-            actionQueueDepthByCharacter[characterId] = queueDepth;
-            Debug.Log($"Character {characterId} has an action queue depth of {queueDepth}");
-        }
-        // Get total cancellations by character for adaptive difficulty analysis
-        public int GetTotalCancellations(ulong characterId)
-        {
-            return actionCancellations.TryGetValue(characterId, out int count) ? count : 0;
-        }
-
-        // Get the frequency of a specific buff type usage for a character
-        public int GetBuffUsageCount(ulong characterId, Unity.BossRoom.Gameplay.Actions.Action.BuffableValue buffType)
-        {
-            if (buffUsageByCharacter.ContainsKey(characterId) && buffUsageByCharacter[characterId].ContainsKey(buffType))
-            {
-                return buffUsageByCharacter[characterId][buffType];
-            }
-            return 0;
-        }
-
-        // Get the current queue depth for a character's action queue
-        public int GetCurrentQueueDepth(ulong characterId)
-        {
-            return actionQueueDepthByCharacter.TryGetValue(characterId, out int depth) ? depth : 0;
         }
         public int GetDeathCount(ulong playerId)
         {
@@ -1104,21 +672,6 @@ namespace Unity.BossRoom.Gameplay.Metrics
             return playerSessionTime.TryGetValue(playerId, out float time) ? time : 0f;
         }
 
-        public int GetTotalDamageTaken(ulong playerId)
-        {
-            return damageTakenByCharacter.TryGetValue(playerId, out int damage) ? damage : 0;
-        }
-
-        public int GetMeleeAttacks(ulong playerId)
-        {
-            return meleeAttacksPerformedByCharacter.TryGetValue(playerId, out int attacks) ? attacks : 0;
-        }
-
-        public int GetMeleeHits(ulong playerId)
-        {
-            return meleeHitsByCharacter.TryGetValue(playerId, out int hits) ? hits : 0;
-        }
-
         public int GetEnemiesKilled(ulong playerId)
         {
             return enemiesKilledByCharacter.TryGetValue(playerId, out int kills) ? kills : 0;
@@ -1127,9 +680,20 @@ namespace Unity.BossRoom.Gameplay.Metrics
         {
             return healingReceivedByCharacter.TryGetValue(characterId, out int healingAmount) ? healingAmount : 0;
         }
-        private void TrackHealing(ServerCharacter healer, int healingAmount, ulong receiverId)
+        public void TrackHealing(ServerCharacter healer, int healingAmount, ulong receiverId)
         {
-            TrackHealingReceived(receiverId, healingAmount);
+            if (receiverId == 0) // If the receiver is the player
+            {
+                playerTotalHealingReceived += healingAmount;
+                Debug.Log($"Player has received {playerTotalHealingReceived} total healing.");
+                UpdatePlayerHealth(playerTotalDamageReceived);
+            }
+
+            if (!healingReceivedByCharacter.ContainsKey(receiverId))
+            {
+                healingReceivedByCharacter[receiverId] = 0;
+            }
+            healingReceivedByCharacter[receiverId] += healingAmount;
         }
 
         public float GetDeathRatePerMinute(ulong playerId)
@@ -1148,6 +712,85 @@ namespace Unity.BossRoom.Gameplay.Metrics
         {
             float playTime = GetPlayTime(playerId);
             return (playTime > 0) ? (GetHealingReceived(playerId) / (playTime / 60f)) : 0f;
+        }
+
+        public void TrackEnemyKilled(ulong killerId, GameObject killedEntity)
+        {
+            if (killedEntity.layer == LayerMask.NameToLayer("NPCs"))
+            {
+                if (killerId == 0) // Check if it's the player
+                {
+                    playerEnemiesKilled++;
+                    Debug.Log($"Player killed an enemy. Total kills: {playerEnemiesKilled}");
+                }
+
+                if (!enemiesKilledByCharacter.ContainsKey(killerId))
+                {
+                    enemiesKilledByCharacter[killerId] = 0;
+                }
+                enemiesKilledByCharacter[killerId]++;
+            }
+            else
+            {
+                Debug.Log($"Character {killerId} killed a non-enemy entity. No metrics recorded.");
+            }
+        }
+
+        // New getters
+        public int GetPlayerEnemiesKilled()
+        {
+            return playerEnemiesKilled;
+        }
+
+        public int GetPlayerTotalDamageReceived()
+        {
+            return playerTotalDamageReceived;
+        }
+
+        public int GetPlayerTotalHealingReceived()
+        {
+            return playerTotalHealingReceived;
+        }
+
+        public void SetPlayerMaxHealth(int maxHealth)
+        {
+            if (playerMaxHealthTracked == 0)
+            {
+                playerMaxHealthTracked = maxHealth;
+                Debug.Log($"Player max health set to {playerMaxHealthTracked}");
+            }
+        }
+
+        public void UpdatePlayerHealth(int currentHealth)
+        {
+            playerCurrentHealth = currentHealth;
+            CalculatePlayerHealthPercentage();
+        }
+
+        private void CalculatePlayerHealthPercentage()
+        {
+            if (playerMaxHealthTracked > 0)
+            {
+                playerHealthPercentage = (float)playerCurrentHealth / playerMaxHealthTracked * 100f;
+                Debug.Log($"Player current health: {playerCurrentHealth}/{playerMaxHealthTracked} ({playerHealthPercentage}%)");
+            }
+        }
+
+        public float GetDamageTakenPerMinute(ulong playerId)
+        {
+            float playTime = GetPlayTime(playerId);
+            int damageTaken = GetPlayerTotalDamageReceived();
+
+            return (playTime > 0) ? (damageTaken / (playTime / 60f)) : 0f;
+        }
+
+        public float GetCurrentHealthPercentage(ulong playerId)
+        {
+            if (playerMaxHealthTracked > 0)
+            {
+                return (float)playerCurrentHealth / playerMaxHealthTracked * 100f;
+            }
+            return 0f;
         }
 
     }

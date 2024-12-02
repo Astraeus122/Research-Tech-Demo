@@ -31,7 +31,13 @@ namespace Unity.BossRoom.Gameplay.AI
             Action.MaintainEnemySpawnRate,
             Action.IncreaseHealingAssistance,
             Action.DecreaseHealingAssistance,
-            Action.MaintainHealingAssistance
+            Action.MaintainHealingAssistance,
+            Action.IncreaseEnemyHealth,
+            Action.DecreaseEnemyHealth,
+            Action.MaintainEnemyHealth,
+            Action.IncreasePlayerDamage,
+            Action.DecreasePlayerDamage,
+            Action.MaintainPlayerDamage
         };
 
         // Current state
@@ -87,49 +93,22 @@ namespace Unity.BossRoom.Gameplay.AI
             return 0;
         }
 
-        private void InitializeQTable()
+        private State GetCurrentState()
         {
-            // Initialize Q-Table with possible states and actions
-            // For simplicity, discretize the state space
+            float deathRate = metricsManager.GetDeathRatePerMinute(playerId);
+            float enemiesKilledRate = metricsManager.GetEnemiesKilledPerMinute(playerId);
+            float healingReceivedRate = metricsManager.GetHealingReceivedPerMinute(playerId);
+            float damageTakenPerMinute = metricsManager.GetDamageTakenPerMinute(playerId);
+            float currentHealthPercentage = metricsManager.GetCurrentHealthPercentage(playerId);
 
-            foreach (var state in GeneratePossibleStates())
+            return new State
             {
-                QTable[state] = new Dictionary<Action, float>();
-                foreach (var action in actions)
-                {
-                    QTable[state][action] = 0f; // Initialize Q-values to 0
-                }
-            }
-        }
-
-        private List<State> GeneratePossibleStates()
-        {
-            // Discretize metrics into bins
-            // Example: Death Rate (Low, Medium, High), etc.
-
-            List<State> states = new List<State>();
-
-            var deathRates = new float[] { 0f, 1f, 3f }; // per minute
-            var enemiesKilledRates = new float[] { 0f, 5f, 15f };
-            var healingReceivedRates = new float[] { 0f, 50f, 150f };
-
-            foreach (var deathRate in deathRates)
-            {
-                foreach (var enemiesKilledRate in enemiesKilledRates)
-                {
-                    foreach (var healingReceivedRate in healingReceivedRates)
-                    {
-                        states.Add(new State
-                        {
-                            DeathRateCategory = Categorize(deathRate, new float[] { 1f, 3f }),
-                            EnemiesKilledRateCategory = Categorize(enemiesKilledRate, new float[] { 5f, 15f }),
-                            HealingReceivedRateCategory = Categorize(healingReceivedRate, new float[] { 50f, 150f })
-                        });
-                    }
-                }
-            }
-
-            return states;
+                DeathRateCategory = Categorize(deathRate, new float[] { 1f, 3f }),
+                EnemiesKilledRateCategory = Categorize(enemiesKilledRate, new float[] { 5f, 15f }),
+                HealingReceivedRateCategory = Categorize(healingReceivedRate, new float[] { 50f, 150f }),
+                DamageTakenRateCategory = Categorize(damageTakenPerMinute, new float[] { 10f, 30f }),
+                HealthPercentageCategory = Categorize(currentHealthPercentage, new float[] { 40f, 70f })
+            };
         }
 
         private string Categorize(float value, float[] thresholds)
@@ -140,20 +119,6 @@ namespace Unity.BossRoom.Gameplay.AI
                 return "Medium";
             else
                 return "High";
-        }
-
-        private State GetCurrentState()
-        {
-            float deathRate = metricsManager.GetDeathRatePerMinute(playerId);
-            float enemiesKilledRate = metricsManager.GetEnemiesKilledPerMinute(playerId);
-            float healingReceivedRate = metricsManager.GetHealingReceivedPerMinute(playerId);
-
-            return new State
-            {
-                DeathRateCategory = Categorize(deathRate, new float[] { 1f, 3f }),
-                EnemiesKilledRateCategory = Categorize(enemiesKilledRate, new float[] { 5f, 15f }),
-                HealingReceivedRateCategory = Categorize(healingReceivedRate, new float[] { 50f, 150f })
-            };
         }
 
         private void Step()
@@ -187,6 +152,16 @@ namespace Unity.BossRoom.Gameplay.AI
                 float maxQ = float.MinValue;
                 Action bestAction = Action.MaintainEnemyDamage; // Default action
 
+                if (!QTable.ContainsKey(state))
+                {
+                    // Initialize Q-values for unseen state
+                    QTable[state] = new Dictionary<Action, float>();
+                    foreach (var act in actions)
+                    {
+                        QTable[state][act] = 0f;
+                    }
+                }
+
                 foreach (var action in actions)
                 {
                     if (QTable[state].TryGetValue(action, out float qValue))
@@ -205,34 +180,92 @@ namespace Unity.BossRoom.Gameplay.AI
 
         private void ApplyAction(Action action)
         {
+            float oldValue, newValue;
+
             switch (action)
             {
                 case Action.IncreaseEnemyDamage:
-                    DifficultyManager.Instance.AdjustRLEnemyDamage(RuleBasedAIManager.Instance.enemyDamageAdjustmentStep);
+                    oldValue = DifficultyManager.Instance.RLEnemyDamageMultiplier;
+                    DifficultyManager.Instance.AdjustRLEnemyDamage(RuleBasedAIManager.Instance.enemyDamageAdjustmentStep, "RL Adjustment: Increase enemy damage due to player performance");
+                    newValue = DifficultyManager.Instance.RLEnemyDamageMultiplier;
+                    AIChangeLogger.LogChange("RLEnemyDamageMultiplier", oldValue, newValue, "RL Adjustment", "Increase enemy damage");
+                    AIChangeLogger.SaveLog();
                     break;
+
                 case Action.DecreaseEnemyDamage:
-                    DifficultyManager.Instance.AdjustRLEnemyDamage(-RuleBasedAIManager.Instance.enemyDamageAdjustmentStep);
+                    oldValue = DifficultyManager.Instance.RLEnemyDamageMultiplier;
+                    DifficultyManager.Instance.AdjustRLEnemyDamage(-RuleBasedAIManager.Instance.enemyDamageAdjustmentStep, "RL Adjustment: Decrease enemy damage due to player struggles");
+                    newValue = DifficultyManager.Instance.RLEnemyDamageMultiplier;
+                    AIChangeLogger.LogChange("RLEnemyDamageMultiplier", oldValue, newValue, "RL Adjustment", "Decrease enemy damage");
+                    AIChangeLogger.SaveLog();
                     break;
-                case Action.MaintainEnemyDamage:
-                    // Do nothing
-                    break;
+
                 case Action.IncreaseEnemySpawnRate:
-                    DifficultyManager.Instance.AdjustRLEnemySpawnRate(RuleBasedAIManager.Instance.enemySpawnRateAdjustmentStep);
+                    oldValue = DifficultyManager.Instance.RLEnemySpawnRateMultiplier;
+                    DifficultyManager.Instance.AdjustRLEnemySpawnRate(RuleBasedAIManager.Instance.enemySpawnRateAdjustmentStep, "RL Adjustment: Increase enemy spawn rate for challenge");
+                    newValue = DifficultyManager.Instance.RLEnemySpawnRateMultiplier;
+                    AIChangeLogger.LogChange("RLEnemySpawnRateMultiplier", oldValue, newValue, "RL Adjustment", "Increase enemy spawn rate");
+                    AIChangeLogger.SaveLog();
                     break;
+
                 case Action.DecreaseEnemySpawnRate:
-                    DifficultyManager.Instance.AdjustRLEnemySpawnRate(-RuleBasedAIManager.Instance.enemySpawnRateAdjustmentStep);
+                    oldValue = DifficultyManager.Instance.RLEnemySpawnRateMultiplier;
+                    DifficultyManager.Instance.AdjustRLEnemySpawnRate(-RuleBasedAIManager.Instance.enemySpawnRateAdjustmentStep, "RL Adjustment: Decrease enemy spawn rate to ease difficulty");
+                    newValue = DifficultyManager.Instance.RLEnemySpawnRateMultiplier;
+                    AIChangeLogger.LogChange("RLEnemySpawnRateMultiplier", oldValue, newValue, "RL Adjustment", "Decrease enemy spawn rate");
+                    AIChangeLogger.SaveLog();
                     break;
-                case Action.MaintainEnemySpawnRate:
-                    // Do nothing
-                    break;
+
                 case Action.IncreaseHealingAssistance:
-                    DifficultyManager.Instance.AdjustRLHealingAssistance(RuleBasedAIManager.Instance.healingAssistanceAdjustmentStep);
+                    oldValue = DifficultyManager.Instance.RLHealingAssistanceMultiplier;
+                    DifficultyManager.Instance.AdjustRLHealingAssistance(RuleBasedAIManager.Instance.healingAssistanceAdjustmentStep, "RL Adjustment: Increase healing assistance for player struggles");
+                    newValue = DifficultyManager.Instance.RLHealingAssistanceMultiplier;
+                    AIChangeLogger.LogChange("RLHealingAssistanceMultiplier", oldValue, newValue, "RL Adjustment", "Increase healing assistance");
+                    AIChangeLogger.SaveLog();
                     break;
+
                 case Action.DecreaseHealingAssistance:
-                    DifficultyManager.Instance.AdjustRLHealingAssistance(-RuleBasedAIManager.Instance.healingAssistanceAdjustmentStep);
+                    oldValue = DifficultyManager.Instance.RLHealingAssistanceMultiplier;
+                    DifficultyManager.Instance.AdjustRLHealingAssistance(-RuleBasedAIManager.Instance.healingAssistanceAdjustmentStep, "RL Adjustment: Decrease healing assistance for balanced play");
+                    newValue = DifficultyManager.Instance.RLHealingAssistanceMultiplier;
+                    AIChangeLogger.LogChange("RLHealingAssistanceMultiplier", oldValue, newValue, "RL Adjustment", "Decrease healing assistance");
+                    AIChangeLogger.SaveLog();
                     break;
-                case Action.MaintainHealingAssistance:
-                    // Do nothing
+
+                case Action.IncreaseEnemyHealth:
+                    oldValue = DifficultyManager.Instance.RLEnemyHealthMultiplier;
+                    DifficultyManager.Instance.AdjustRLEnemyHealth(RuleBasedAIManager.Instance.enemyHealthAdjustmentStep, "RL Adjustment: Increase enemy health due to player performance");
+                    newValue = DifficultyManager.Instance.RLEnemyHealthMultiplier;
+                    AIChangeLogger.LogChange("RLEnemyHealthMultiplier", oldValue, newValue, "RL Adjustment", "Increase enemy health");
+                    AIChangeLogger.SaveLog();
+                    break;
+
+                case Action.DecreaseEnemyHealth:
+                    oldValue = DifficultyManager.Instance.RLEnemyHealthMultiplier;
+                    DifficultyManager.Instance.AdjustRLEnemyHealth(-RuleBasedAIManager.Instance.enemyHealthAdjustmentStep, "RL Adjustment: Decrease enemy health due to player struggles");
+                    newValue = DifficultyManager.Instance.RLEnemyHealthMultiplier;
+                    AIChangeLogger.LogChange("RLEnemyHealthMultiplier", oldValue, newValue, "RL Adjustment", "Decrease enemy health");
+                    AIChangeLogger.SaveLog();
+                    break;
+
+                case Action.IncreasePlayerDamage:
+                    oldValue = DifficultyManager.Instance.RLPlayerDamageMultiplier;
+                    DifficultyManager.Instance.AdjustRLPlayerDamage(RuleBasedAIManager.Instance.playerDamageAdjustmentStep, "RL Adjustment: Increase player damage due to player struggles");
+                    newValue = DifficultyManager.Instance.RLPlayerDamageMultiplier;
+                    AIChangeLogger.LogChange("RLPlayerDamageMultiplier", oldValue, newValue, "RL Adjustment", "Increase player damage");
+                    AIChangeLogger.SaveLog();
+                    break;
+
+                case Action.DecreasePlayerDamage:
+                    oldValue = DifficultyManager.Instance.RLPlayerDamageMultiplier;
+                    DifficultyManager.Instance.AdjustRLPlayerDamage(-RuleBasedAIManager.Instance.playerDamageAdjustmentStep, "RL Adjustment: Decrease player damage due to player overperformance");
+                    newValue = DifficultyManager.Instance.RLPlayerDamageMultiplier;
+                    AIChangeLogger.LogChange("RLPlayerDamageMultiplier", oldValue, newValue, "RL Adjustment", "Decrease player damage");
+                    AIChangeLogger.SaveLog();
+                    break;
+
+                default:
+                    Debug.Log($"Action {action} does not modify state.");
                     break;
             }
 
@@ -248,12 +281,22 @@ namespace Unity.BossRoom.Gameplay.AI
             bool balancedDeathRate = currentState.DeathRateCategory == "Medium";
             bool balancedEnemiesKilled = currentState.EnemiesKilledRateCategory == "Medium";
             bool balancedHealing = currentState.HealingReceivedRateCategory == "Medium";
+            bool balancedDamageTaken = currentState.DamageTakenRateCategory == "Medium";
+            bool balancedHealthPercentage = currentState.HealthPercentageCategory == "Medium";
 
-            if (balancedDeathRate && balancedEnemiesKilled && balancedHealing)
+            int balancedMetrics = 0;
+
+            if (balancedDeathRate) balancedMetrics++;
+            if (balancedEnemiesKilled) balancedMetrics++;
+            if (balancedHealing) balancedMetrics++;
+            if (balancedDamageTaken) balancedMetrics++;
+            if (balancedHealthPercentage) balancedMetrics++;
+
+            if (balancedMetrics >= 4)
             {
                 return 1.0f; // Positive reward
             }
-            else if (!balancedDeathRate || !balancedEnemiesKilled || !balancedHealing)
+            else if (balancedMetrics <= 2)
             {
                 return -1.0f; // Negative reward
             }
@@ -317,6 +360,8 @@ namespace Unity.BossRoom.Gameplay.AI
             public string DeathRateCategory { get; set; }
             public string EnemiesKilledRateCategory { get; set; }
             public string HealingReceivedRateCategory { get; set; }
+            public string DamageTakenRateCategory { get; set; }
+            public string HealthPercentageCategory { get; set; }
 
             public override bool Equals(object obj)
             {
@@ -324,34 +369,39 @@ namespace Unity.BossRoom.Gameplay.AI
                 {
                     return DeathRateCategory == other.DeathRateCategory &&
                            EnemiesKilledRateCategory == other.EnemiesKilledRateCategory &&
-                           HealingReceivedRateCategory == other.HealingReceivedRateCategory;
+                           HealingReceivedRateCategory == other.HealingReceivedRateCategory &&
+                           DamageTakenRateCategory == other.DamageTakenRateCategory &&
+                           HealthPercentageCategory == other.HealthPercentageCategory;
                 }
                 return false;
             }
 
             public override int GetHashCode()
             {
-                return (DeathRateCategory + EnemiesKilledRateCategory + HealingReceivedRateCategory).GetHashCode();
+                return (DeathRateCategory + EnemiesKilledRateCategory + HealingReceivedRateCategory +
+                        DamageTakenRateCategory + HealthPercentageCategory).GetHashCode();
             }
 
             // Convert state to a unique string identifier
             public string ToUniqueString()
             {
-                return $"{DeathRateCategory}_{EnemiesKilledRateCategory}_{HealingReceivedRateCategory}";
+                return $"{DeathRateCategory}_{EnemiesKilledRateCategory}_{HealingReceivedRateCategory}_{DamageTakenRateCategory}_{HealthPercentageCategory}";
             }
 
             // Create a state from a unique string identifier
             public static State FromUniqueString(string uniqueString)
             {
                 var parts = uniqueString.Split('_');
-                if (parts.Length != 3)
+                if (parts.Length != 5)
                     throw new Exception("Invalid state string format.");
 
                 return new State
                 {
                     DeathRateCategory = parts[0],
                     EnemiesKilledRateCategory = parts[1],
-                    HealingReceivedRateCategory = parts[2]
+                    HealingReceivedRateCategory = parts[2],
+                    DamageTakenRateCategory = parts[3],
+                    HealthPercentageCategory = parts[4]
                 };
             }
         }
@@ -367,10 +417,16 @@ namespace Unity.BossRoom.Gameplay.AI
             MaintainEnemySpawnRate,
             IncreaseHealingAssistance,
             DecreaseHealingAssistance,
-            MaintainHealingAssistance
+            MaintainHealingAssistance,
+            IncreaseEnemyHealth,
+            DecreaseEnemyHealth,
+            MaintainEnemyHealth,
+            IncreasePlayerDamage,
+            DecreasePlayerDamage,
+            MaintainPlayerDamage
         }
 
-        // <summary>
+        /// <summary>
         /// Saves the Q-Table to a JSON file.
         /// </summary>
         private void SaveQTable()
@@ -428,9 +484,16 @@ namespace Unity.BossRoom.Gameplay.AI
             }
             else
             {
-                InitializeQTable();
-                Debug.Log("Q-Table initialized with default values.");
+                // No need to initialize here; Q-values will be initialized when states are encountered
+                Debug.Log("Q-Table file not found. A new Q-Table will be created during runtime.");
             }
+        }
+
+        // Serializable Q-Table class for JSON serialization
+        [Serializable]
+        private class SerializableQTable
+        {
+            public Dictionary<string, Dictionary<string, float>> QTableData = new Dictionary<string, Dictionary<string, float>>();
         }
     }
 }

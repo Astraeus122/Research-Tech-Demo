@@ -1,6 +1,7 @@
 using System;
 using Unity.BossRoom.Gameplay.AI;
 using Unity.BossRoom.Gameplay.GameplayObjects.Character;
+using Unity.BossRoom.Gameplay.Metrics;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -11,6 +12,13 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
         public event Action<ServerCharacter, int> DamageReceived;
         public event Action<Collision> CollisionEntered;
         public static event Action<ServerCharacter, int, ulong> OnMetricHealingReceived;
+
+        private float healthMultiplier = 1f;
+
+        public void SetHealthMultiplier(float multiplier)
+        {
+            healthMultiplier = multiplier;
+        }
 
 
         [SerializeField]
@@ -38,7 +46,7 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
             {
                 if (IsMonster())
                 {
-                    HP = Mathf.RoundToInt(HP * damageMultiplier); // Apply damage multiplier only for monsters
+                    HP = Mathf.RoundToInt(HP * damageMultiplier / healthMultiplier); // Apply both multipliers
                 }
                 if (RuleBasedAIManager.Instance != null)
                 {
@@ -54,8 +62,9 @@ namespace Unity.BossRoom.Gameplay.GameplayObjects
             {
                 if (RuleBasedAIManager.Instance != null)
                 {
-                    HP = Mathf.RoundToInt(HP * RuleBasedAIManager.Instance.healingMultiplier); // Adjust healing
-                    OnMetricHealingReceived?.Invoke(inflicter, HP, NetworkObjectId); // Log final adjusted healing
+                    HP = Mathf.RoundToInt(HP * DifficultyManager.Instance.FinalHealingAssistanceMultiplier); // Apply healing multiplier
+                    OnMetricHealingReceived?.Invoke(inflicter, HP, NetworkObjectId);
+
                 }
                 else
                 {
